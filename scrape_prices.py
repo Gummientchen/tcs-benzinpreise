@@ -110,101 +110,122 @@ def _run_scraper_logic():
 
     # uc=True uses Undetected ChromeDriver (good for bypassing protections)
     # user_data_dir creates a persistent profile folder so map tiles and assets are cached across runs
-    with SB(uc=True, headless=False) as sb:
+    with SB(uc=True, headless=False, block_images=True, chromium_arg="--host-rules=MAP *tcsmaps.ch 127.0.0.1, MAP fonts.googleapis.com 127.0.0.1, MAP fonts.gstatic.com 127.0.0.1") as sb:
         # Limit window size to reduce map tiles loaded
         sb.set_window_size(750, 750)
         
-        # Create a dictionary to map urls to window handles
-        url_to_handle = {}
+        print(f"Processing {len(URLS)} gas stations in batches of 5 to balance speed and RAM/CPU...")
         
-        # First, open all URLs concurrently
-        print("Triggering all gas stations to load in parallel...")
-        for i, url in enumerate(URLS):
-            if i == 0:
-                print(f"Loading {url} in tab {i} (foreground)...")
-                sb.uc_open(url)
-            else:
-                wait_time = random.uniform(0.1, 0.3)
-                time.sleep(wait_time)
-                print(f"Triggering {url} in background tab {i}...")
-                sb.driver.execute_cdp_cmd('Target.createTarget', {'url': url})
+        chunk_size = 5
+        for c_idx in range(0, len(URLS), chunk_size):
+            chunk = URLS[c_idx:c_idx+chunk_size]
+            print(f"\n--- Starting Batch {c_idx//chunk_size + 1} ({len(chunk)} stations) ---")
             
-        print("All tabs triggered. Waiting a moment for pages to load in parallel...")
-        time.sleep(3)
-        
-        # Map out which handle belongs to which URL
-        for handle in sb.driver.window_handles:
-            try:
-                sb.switch_to_window(handle)
-                current_url = sb.get_current_url()
-                # Find which of our URLS this handle represents
-                for u in URLS:
-                    if u in current_url:
-                        url_to_handle[u] = handle
-                        break
-            except Exception:
-                pass
-                
-        # Next, go through each URL and extract the information
-        for i, url in enumerate(URLS):
-            try:
-                handle = url_to_handle.get(url)
-                if not handle:
-                    print(f"  [Error] Tab for {url} not found!")
-                    continue
-                    
-                sb.switch_to_window(handle)
-                print(f"Extracting data from tab {i} ({url}) ...")
-                
-                # Wait for the price element to be visible
-                sb.wait_for_element_visible(PRICE_XPATH, timeout=5)
-                
-                price_text = sb.get_text(PRICE_XPATH)
-                age_text = sb.get_text(AGE_XPATH)
-                name_text = sb.get_text(NAME_XPATH)
-                address_text = sb.get_text(ADDRESS_XPATH)
-                map_href = sb.get_attribute(MAP_XPATH, "href")
-                
-                print(f"  Raw price text: '{price_text}'")
-                print(f"  Raw age text:   '{age_text}'")
-                print(f"  Name: {name_text}")
-                
-                age_hours = get_age_in_hours(age_text)
-                
-                # Extract float price
-                price = None
-                match = re.search(r'(\d+\.\d+)', price_text)
-                if match:
-                    price = float(match.group(1))
-                    if age_hours > 48:
-                        print(f"  [Old] Price >48h (approx. {age_hours}h). Kept in output, ignored for avg.")
-                    else:
-                        prices.append(price)
-                        print(f"  [Added] Extracted price: {price}")
+            # 1. Trigger background tabs for this chunk
+            for j, url in enumerate(chunk):
+                global_i = c_idx + j
+                if len(sb.driver.window_handles) == 1 and j == 0:
+                    print(f"Loading {url} in main tab {global_i} (foreground)...")
+                    sb.uc_open(url)
                 else:
-                    print("  [Error] Could not parse float price from text.")
+                    wait_time = random.uniform(0.1, 0.3)
+                    time.sleep(wait_time)
+                    print(f"Triggering {url} in background tab {global_i}...")
+                    sb.driver.execute_cdp_cmd('Target.createTarget', {'url': url})
                     
-                # Extract coords from google maps link
-                lat, lng = None, None
-                if map_href:
-                    coord_match = re.search(r'(-?\d+\.\d+)[,%](-?\d+\.\d+)', map_href)
-                    if coord_match:
-                        lat = float(coord_match.group(1))
-                        lng = float(coord_match.group(2))
-                
-                station = {
-                    "url": url,
-                    "name": name_text,
-                    "address": address_text,
-                    "latitude": lat,
-                    "longitude": lng,
-                    "price": price,
-                    "age_hours": age_hours
-                }
-                stations_data.append(station)
+            print("Waiting a moment for batch pages to load in parallel...")
+            time.sleep(3)
+            
+            # 2. Map out which handle belongs to which URL in this chunk
+            url_to_handle = {}
+            for handle in sb.driver.window_handles:
+                try:
+                    sb.switch_to_window(handle)
+                    current_url = sb.get_current_url()
+                    for u in chunk:
+                        if u in current_url:
+                            url_to_handle[u] = handle
+                            break
+                except Exception:
+                    pass
                     
-            except Exception as e:
-                print(f"  [Error] Could not extract from tab {i} ({url}): {e}")
+            # 3. Extract the information sequentially for this chunk
+            for j, url in enumerate(chunk):
+                global_i = c_idx + j
+                try:
+                    handle = url_to_handle.get(url)
+                    if not handle:
+                        print(f"  [Error] Tab for station {global_i} not found!")
+                        continue
+                        
+                    sb.switch_to_window(handle)
+                    print(f"Extracting data from tab {global_i} ({url}) ...")
+                    
+                    # Wait for the price element to be visible
+                    sb.wait_for_element_visible(PRICE_XPATH, timeout=5)
+                    
+                    price_text = sb.get_text(PRICE_XPATH)
+                    age_text = sb.get_text(AGE_XPATH)
+                    name_text = sb.get_text(NAME_XPATH)
+                    address_text = sb.get_text(ADDRESS_XPATH)
+                    map_href = sb.get_attribute(MAP_XPATH, "href")
+                    
+                    print(f"  Raw price text: '{price_text}'")
+                    print(f"  Raw age text:   '{age_text}'")
+                    print(f"  Name: {name_text}")
+                    
+                    age_hours = get_age_in_hours(age_text)
+                    
+                    # Extract float price
+                    price = None
+                    match = re.search(r'(\d+\.\d+)', price_text)
+                    if match:
+                        price = float(match.group(1))
+                        if age_hours > 48:
+                            print(f"  [Old] Price >48h (approx. {age_hours}h). Kept in output, ignored for avg.")
+                        else:
+                            prices.append(price)
+                            print(f"  [Added] Extracted price: {price}")
+                    else:
+                        print("  [Error] Could not parse float price from text.")
+                        
+                    # Extract coords from google maps link
+                    lat, lng = None, None
+                    if map_href:
+                        coord_match = re.search(r'(-?\d+\.\d+)[,%](-?\d+\.\d+)', map_href)
+                        if coord_match:
+                            lat = float(coord_match.group(1))
+                            lng = float(coord_match.group(2))
+                    
+                    station = {
+                        "url": url,
+                        "name": name_text,
+                        "address": address_text,
+                        "latitude": lat,
+                        "longitude": lng,
+                        "price": price,
+                        "age_hours": age_hours
+                    }
+                    stations_data.append(station)
+                        
+                except Exception as e:
+                    print(f"  [Error] Could not extract from tab {global_i} ({url}): {e}")
+
+            # 4. Cleanup Memory! Close all tabs except one
+            handles = sb.driver.window_handles
+            if len(handles) > 1:
+                # Keep exactly 1 tab open so driver doesn't exit
+                for handle in handles[1:]:
+                    try:
+                        sb.switch_to_window(handle)
+                        sb.driver.close()
+                    except Exception:
+                        pass
+                # Switch back to the ONLY remaining tab
+                sb.switch_to_window(sb.driver.window_handles[0])
+            
+            # Navigate to about:blank to purge previous heavy DOM data before next batch
+            sb.uc_open("about:blank")
                 
     if prices:
         avg_price = sum(prices) / len(prices)
