@@ -116,7 +116,7 @@ def _run_scraper_logic():
         
         print(f"Processing {len(URLS)} gas stations in batches of 5 to balance speed and RAM/CPU...")
         
-        chunk_size = 5
+        chunk_size = 3
         for c_idx in range(0, len(URLS), chunk_size):
             chunk = URLS[c_idx:c_idx+chunk_size]
             print(f"\n--- Starting Batch {c_idx//chunk_size + 1} ({len(chunk)} stations) ---")
