@@ -3,19 +3,28 @@ import re
 import time
 import random
 
-# Add your gas station URLs here
-URLS = [
-    "https://benzin.tcs.ch/de/station/JwQAWr1Sfe9fcpN95c7M/DIESEL",
-    "https://benzin.tcs.ch/de/station/5AgjxEi1MQ8NT0iwxnpI/DIESEL",
-    "https://benzin.tcs.ch/de/station/nkzAu0SOg1ESa7AOluXc/DIESEL",
-    "https://benzin.tcs.ch/de/station/xfwW7WAzyFxwgiYVuV7z/DIESEL",
-    "https://benzin.tcs.ch/de/station/mdnS1f1kErsgoqRH8Y0Q/DIESEL",
-    "https://benzin.tcs.ch/de/station/VANJJZTCA4xALxzpSCuo/DIESEL",
-    "https://benzin.tcs.ch/de/station/KvdfclwysRmOUvHUHsTd/DIESEL",
-    "https://benzin.tcs.ch/de/station/uizryh2cOKrZdEHFuVuu/DIESEL",
-    "https://benzin.tcs.ch/de/station/8DBnMqYBTpoFl8giTDhF/DIESEL",
-    "https://benzin.tcs.ch/de/station/O3T5nFJcxYAshHWDNZRs/DIESEL",
-]
+def load_urls_from_file(filepath="urls.txt"):
+    import os
+    if not os.path.exists(filepath):
+        print(f"[Warning] {filepath} not found.")
+        return []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            # Read lines, strip whitespace, ignore empty lines and commented lines
+            urls = [
+                line.strip() 
+                for line in f 
+                if line.strip() and not line.strip().startswith('#')
+            ]
+            
+            # Remove duplicates while preserving order
+            return list(dict.fromkeys(urls))
+    except Exception as e:
+        print(f"[Error] Failed to read {filepath}: {e}")
+        return []
+
+# Load URLs from urls.txt dynamically
+URLS = load_urls_from_file("urls.txt")
 
 PRICE_XPATH = '//*[@id="bottomDrawer"]/div[2]/ul/li[1]/div[1]/span'
 AGE_XPATH = '//*[@id="bottomDrawer"]/div[2]/ul/li[1]/div[1]/a/div/p'
@@ -88,11 +97,22 @@ def _run_scraper_logic():
         print("Please add some URLs to the URLS list.")
         return {"average_price": None, "valid_stations_count": 0, "stations": []}
 
+    import os
+    lock_file = os.path.join("downloaded_files", "driver_fixing.lock")
+    if os.path.exists(lock_file):
+        try:
+            os.remove(lock_file)
+            print("  Removed redundant lock file before starting SeleniumBase.")
+        except Exception as e:
+            print(f"  Could not remove lock file: {e}")
+
+        time.sleep(1)
+
     # uc=True uses Undetected ChromeDriver (good for bypassing protections)
     # user_data_dir creates a persistent profile folder so map tiles and assets are cached across runs
     with SB(uc=True, headless=False) as sb:
         # Limit window size to reduce map tiles loaded
-        sb.set_window_size(650, 850)
+        sb.set_window_size(750, 750)
         
         # Create a dictionary to map urls to window handles
         url_to_handle = {}
