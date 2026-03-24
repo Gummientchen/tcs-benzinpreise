@@ -90,9 +90,12 @@ def scrape_gas_prices():
 
     # uc=True uses Undetected ChromeDriver (good for bypassing protections)
     # user_data_dir creates a persistent profile folder so map tiles and assets are cached across runs
-    with SB(uc=True, headless=False, user_data_dir="chrome_profile") as sb:
+    with SB(uc=True, headless=False) as sb:
         # Limit window size to reduce map tiles loaded
-        sb.set_window_size(625, 790)
+        sb.set_window_size(650, 850)
+        
+        # Create a dictionary to map urls to window handles
+        url_to_handle = {}
         
         # First, open all URLs concurrently
         print("Triggering all gas stations to load in parallel...")
@@ -104,19 +107,37 @@ def scrape_gas_prices():
                 wait_time = random.uniform(0.1, 0.3)
                 time.sleep(wait_time)
                 print(f"Triggering {url} in background tab {i}...")
-                sb.execute_script(f"window.open('{url}', '_blank');")
+                sb.driver.execute_cdp_cmd('Target.createTarget', {'url': url})
             
         print("All tabs triggered. Waiting a moment for pages to load in parallel...")
         time.sleep(3)
         
-        # Next, go through each tab and extract the information
+        # Map out which handle belongs to which URL
+        for handle in sb.driver.window_handles:
+            try:
+                sb.switch_to_window(handle)
+                current_url = sb.get_current_url()
+                # Find which of our URLS this handle represents
+                for u in URLS:
+                    if u in current_url:
+                        url_to_handle[u] = handle
+                        break
+            except Exception:
+                pass
+                
+        # Next, go through each URL and extract the information
         for i, url in enumerate(URLS):
             try:
-                sb.switch_to_window(i)
+                handle = url_to_handle.get(url)
+                if not handle:
+                    print(f"  [Error] Tab for {url} not found!")
+                    continue
+                    
+                sb.switch_to_window(handle)
                 print(f"Extracting data from tab {i} ({url}) ...")
                 
                 # Wait for the price element to be visible
-                sb.wait_for_element_visible(PRICE_XPATH, timeout=15)
+                sb.wait_for_element_visible(PRICE_XPATH, timeout=5)
                 
                 price_text = sb.get_text(PRICE_XPATH)
                 age_text = sb.get_text(AGE_XPATH)
