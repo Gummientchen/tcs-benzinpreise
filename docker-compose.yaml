@@ -1,0 +1,11 @@
+version: "3.8"
+
+services:
+  gas-price-scraper:
+    build: .
+    container_name: gas-price-scraper
+    restart: unless-stopped
+    ports:
+      - "8211:8080"
+    environment:
+      - TZ=Europe/Zurich
