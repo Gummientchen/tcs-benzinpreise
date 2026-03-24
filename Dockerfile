@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     python3-tk \
     python3-dev \
+    tini \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -31,5 +33,6 @@ RUN chmod +x run.sh
 # Expose port 8080 for the web server
 EXPOSE 8080
 
-# Use the bash script as entrypoint
+# Use tini as the init process and the bash script as the default command
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./run.sh"]

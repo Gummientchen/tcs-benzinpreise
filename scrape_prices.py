@@ -223,6 +223,9 @@ def _run_scraper_logic():
             avg_price = None
             valid_count = 0
             
+    if avg_price is not None:
+        avg_price = round(avg_price, 4)
+            
     result = {
         "average_price": avg_price,
         "valid_stations_count": valid_count,
@@ -233,7 +236,7 @@ def _run_scraper_logic():
         print("-" * 40)
         print(f"Successfully calculated average from {valid_count} gas stations.")
         if avg_price is not None:
-            print(f"Average Diesel price: {avg_price:.2f}")
+            print(f"Average Diesel price: {avg_price:.4f}")
     else:
         print("-" * 40)
         print("No valid prices found.")
