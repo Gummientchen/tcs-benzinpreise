@@ -89,16 +89,31 @@ def scrape_gas_prices():
         return {"average_price": None, "stations": []}
 
     # uc=True uses Undetected ChromeDriver (good for bypassing protections)
-    with SB(uc=True, headless=False) as sb:
+    # user_data_dir creates a persistent profile folder so map tiles and assets are cached across runs
+    with SB(uc=True, headless=False, user_data_dir="chrome_profile") as sb:
+        # Limit window size to reduce map tiles loaded
+        sb.set_window_size(625, 790)
+        
+        # First, open all URLs concurrently
+        print("Triggering all gas stations to load in parallel...")
         for i, url in enumerate(URLS):
-            if i > 0:
-                wait_time = random.uniform(0.3, 1.2)
-                print(f"Waiting for {wait_time:.1f} seconds to avoid rate limits...")
-                time.sleep(wait_time)
-                
-            try:
-                print(f"Scraping {url} ...")
+            if i == 0:
+                print(f"Loading {url} in tab {i} (foreground)...")
                 sb.uc_open(url)
+            else:
+                wait_time = random.uniform(0.1, 0.3)
+                time.sleep(wait_time)
+                print(f"Triggering {url} in background tab {i}...")
+                sb.execute_script(f"window.open('{url}', '_blank');")
+            
+        print("All tabs triggered. Waiting a moment for pages to load in parallel...")
+        time.sleep(3)
+        
+        # Next, go through each tab and extract the information
+        for i, url in enumerate(URLS):
+            try:
+                sb.switch_to_window(i)
+                print(f"Extracting data from tab {i} ({url}) ...")
                 
                 # Wait for the price element to be visible
                 sb.wait_for_element_visible(PRICE_XPATH, timeout=15)
@@ -148,7 +163,7 @@ def scrape_gas_prices():
                 stations_data.append(station)
                     
             except Exception as e:
-                print(f"  [Error] Could not scrape {url}: {e}")
+                print(f"  [Error] Could not extract from tab {i} ({url}): {e}")
                 
     if prices:
         avg_price = sum(prices) / len(prices)
