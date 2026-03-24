@@ -80,13 +80,13 @@ def get_age_in_hours(date_text):
     print(f"  [Warning] Unrecognized age format: '{date_text}'. Assuming >48h.")
     return 9999
 
-def scrape_gas_prices():
+def _run_scraper_logic():
     prices = []
     stations_data = []
     
     if not URLS:
         print("Please add some URLs to the URLS list.")
-        return {"average_price": None, "stations": []}
+        return {"average_price": None, "valid_stations_count": 0, "stations": []}
 
     # uc=True uses Undetected ChromeDriver (good for bypassing protections)
     # user_data_dir creates a persistent profile folder so map tiles and assets are cached across runs
@@ -219,6 +219,26 @@ def scrape_gas_prices():
         print("No valid prices found.")
         
     return result
+
+def scrape_gas_prices(retry=True):
+    try:
+        return _run_scraper_logic()
+    except Exception as e:
+        if retry:
+            import os
+            import shutil
+            print(f"  [Error] Scraper crash detected: {e}")
+            print("  Attempting to clear 'downloaded_files' folder and retry...")
+            if os.path.exists("downloaded_files"):
+                try:
+                    shutil.rmtree("downloaded_files")
+                    print("  Cleared 'downloaded_files' successfully.")
+                except Exception as rme:
+                    print(f"  Could not delete 'downloaded_files': {rme}")
+            return scrape_gas_prices(retry=False)
+        else:
+            print(f"  [Fatal] Scraper failed again after retry: {e}")
+            return {"average_price": None, "valid_stations_count": 0, "stations": []}
 
 if __name__ == "__main__":
     import json
