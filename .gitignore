@@ -1,4 +1,5 @@
 __pycache__
 .venv
 downloaded_files
-chrome_profile/
+chrome_cache/
+chrome_cache_time.txt

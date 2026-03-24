@@ -12,6 +12,11 @@ services:
     healthcheck:
       test: [ "CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' || exit 1" ]
       interval: 300s
-      timeout: 30s
+      timeout: 10s
       retries: 3
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: '3G'

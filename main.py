@@ -32,11 +32,11 @@ class GasPriceHandler(BaseHTTPRequestHandler):
 
             t = ScraperThread()
             t.start()
-            # Wait up to 180 seconds for the scraper to finish
-            t.join(timeout=180.0)
+            # Wait up to 300 seconds for the scraper to finish
+            t.join(timeout=300.0)
             
             if t.is_alive():
-                print("[FATAL ERROR] Scraper thread timed out after 180 seconds!")
+                print("[FATAL ERROR] Scraper thread timed out after 300 seconds!")
                 print("The scraper is permanently hanging. Force crashing to allow Docker restart...")
                 # Exit everything to guarantee process cleanup and a fresh state via Docker
                 os._exit(1)
