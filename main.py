@@ -15,7 +15,14 @@ def background_scraper_loop():
         class ScraperThread(threading.Thread):
             def __init__(self):
                 super().__init__()
-                self.result = {"average_price": None, "valid_stations_count": 0, "stations": []}
+                self.result = {
+                    "average_price": None,
+                    "valid_stations_count": 0,
+                    "cheapest_station": None,
+                    "most_expensive_station": None,
+                    "regions": {},
+                    "stations": []
+                }
             def run(self):
                 self.result = scrape_prices.scrape_gas_prices()
 

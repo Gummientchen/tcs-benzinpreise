@@ -4,28 +4,60 @@ import time
 import random
 import shutil
 
-def load_urls_from_file(filepath="urls.txt"):
+WEIGHT_HALF_DECAY_HOURS = 48.0
+PRICE_MAX_AGE_HOURS = 720.0  # 30 days
+EXTREMES_MAX_AGE_HOURS = 120.0  # 5 days
+
+def load_stations_from_file(filepath="urls.txt"):
+    """
+    Parses urls.txt supporting lines in formats:
+    - URL, Region
+    - URL; Region
+    - URL (defaults region to 'Default')
+    Ignores lines starting with '#' and empty lines.
+    Deduplicates URLs while preserving order.
+    Returns a list of dicts: [{'url': ..., 'region': ...}, ...]
+    """
     import os
     if not os.path.exists(filepath):
         print(f"[Warning] {filepath} not found.")
         return []
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            # Read lines, strip whitespace, ignore empty lines and commented lines
-            urls = [
-                line.strip() 
-                for line in f 
-                if line.strip() and not line.strip().startswith('#')
-            ]
-            
-            # Remove duplicates while preserving order
-            return list(dict.fromkeys(urls))
+            stations = []
+            seen_urls = set()
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Check for delimiter (, or ;)
+                if ',' in line:
+                    parts = line.split(',', 1)
+                    url = parts[0].strip()
+                    region = parts[1].strip() or "Default"
+                elif ';' in line:
+                    parts = line.split(';', 1)
+                    url = parts[0].strip()
+                    region = parts[1].strip() or "Default"
+                else:
+                    url = line
+                    region = "Default"
+                
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    stations.append({"url": url, "region": region})
+            return stations
     except Exception as e:
         print(f"[Error] Failed to read {filepath}: {e}")
         return []
 
-# Load URLs from urls.txt dynamically
-URLS = load_urls_from_file("urls.txt")
+def load_urls_from_file(filepath="urls.txt"):
+    return [s["url"] for s in load_stations_from_file(filepath)]
+
+# Load station configurations dynamically
+STATIONS_CONFIG = load_stations_from_file("urls.txt")
+URLS = [s["url"] for s in STATIONS_CONFIG]
 
 PRICE_XPATH = '//*[@id="bottomDrawer"]/div[2]/ul/li[1]/div[1]/span'
 AGE_XPATH = '//*[@id="bottomDrawer"]/div[2]/ul/li[1]/div[1]/a/div/p'
@@ -67,9 +99,9 @@ def get_age_in_hours(date_text):
     
     # Weeks
     if 'woche' in text:
-        if 'einem' in text:
+        if 'einem' in text or 'einer' in text:
             return 168
-        match = re.search(r'vor\s+(\d+)\s+wochen', text)
+        match = re.search(r'vor\s+(\d+)\s+wochen?', text)
         if match:
             return int(match.group(1)) * 168
         return 168
@@ -90,14 +122,106 @@ def get_age_in_hours(date_text):
     print(f"  [Warning] Unrecognized age format: '{date_text}'. Assuming >48h.")
     return 9999
 
+def calculate_weight(age_hours, t0=WEIGHT_HALF_DECAY_HOURS, max_age_hours=PRICE_MAX_AGE_HOURS):
+    """
+    Inverse square decay weight calculation:
+    weight = 1.0 / (1.0 + age_hours / t0) ** 2
+    Cutoff at max_age_hours (default 720h / 30 days) returns 0.0.
+    """
+    if age_hours is None or age_hours > max_age_hours or age_hours < 0:
+        return 0.0
+    return round(1.0 / ((1.0 + float(age_hours) / float(t0)) ** 2), 6)
+
+def calculate_weighted_average(stations):
+    """
+    Calculates weighted average price and valid stations count.
+    Only stations with valid price and weight > 0 contribute.
+    Falls back to the 3 newest stations if no station has weight > 0.
+    Returns (avg_price, valid_count).
+    """
+    valid = [s for s in stations if s.get("price") is not None and s.get("weight", 0) > 0]
+    if valid:
+        total_weight = sum(s["weight"] for s in valid)
+        if total_weight > 0:
+            weighted_sum = sum(s["price"] * s["weight"] for s in valid)
+            return round(weighted_sum / total_weight, 4), len(valid)
+
+    # Fallback to the 3 newest stations with valid prices
+    priced_stations = [s for s in stations if s.get("price") is not None]
+    priced_stations.sort(key=lambda x: x.get("age_hours", 9999))
+    newest_3 = priced_stations[:3]
+    if newest_3:
+        avg = round(sum(s["price"] for s in newest_3) / len(newest_3), 4)
+        return avg, len(newest_3)
+
+    return None, 0
+
+def get_station_extremes(stations, max_age_hours=EXTREMES_MAX_AGE_HOURS, fallback_count=3):
+    """
+    Finds cheapest_station and most_expensive_station.
+    Candidate pool: stations with valid price and age_hours <= max_age_hours (default 120h / 5 days).
+    Fallback pool: top fallback_count newest stations with valid prices.
+    Ties broken by freshest update (lowest age_hours).
+    Returns (cheapest_station, most_expensive_station).
+    """
+    candidates = [
+        s for s in stations 
+        if s.get("price") is not None and s.get("age_hours", 9999) <= max_age_hours
+    ]
+    if not candidates:
+        priced_stations = [s for s in stations if s.get("price") is not None]
+        priced_stations.sort(key=lambda x: x.get("age_hours", 9999))
+        candidates = priced_stations[:fallback_count]
+        
+    if not candidates:
+        return None, None
+
+    cheapest = min(candidates, key=lambda s: (s["price"], s.get("age_hours", 9999)))
+    most_expensive = max(candidates, key=lambda s: (s["price"], -s.get("age_hours", 9999)))
+    return cheapest, most_expensive
+
+def calculate_regional_stats(stations):
+    """
+    Groups stations by region and computes:
+    - average_price
+    - valid_stations_count
+    - cheapest_station
+    - most_expensive_station
+    Returns dict: {region_name: {...}, ...}
+    """
+    from collections import defaultdict
+    by_region = defaultdict(list)
+    for s in stations:
+        region = s.get("region") or "Default"
+        by_region[region].append(s)
+
+    regions_stats = {}
+    for region, reg_stations in by_region.items():
+        avg_price, valid_count = calculate_weighted_average(reg_stations)
+        cheapest, most_expensive = get_station_extremes(reg_stations)
+        regions_stats[region] = {
+            "average_price": avg_price,
+            "valid_stations_count": valid_count,
+            "cheapest_station": cheapest,
+            "most_expensive_station": most_expensive
+        }
+    return regions_stats
+
 def _run_scraper_logic():
     start_time = time.time()
-    prices = []
     stations_data = []
     
-    if not URLS:
+    stations_config = load_stations_from_file("urls.txt")
+    if not stations_config:
         print("Please add some URLs to the URLS list.")
-        return {"average_price": None, "valid_stations_count": 0, "stations": []}
+        return {
+            "average_price": None,
+            "valid_stations_count": 0,
+            "cheapest_station": None,
+            "most_expensive_station": None,
+            "regions": {},
+            "stations": []
+        }
 
     import os
     lock_file = os.path.join("downloaded_files", "driver_fixing.lock")
@@ -144,11 +268,13 @@ def _run_scraper_logic():
         # Limit window size to reduce map tiles loaded
         sb.set_window_size(750, 750)
         
-        print(f"Loading {len(URLS)} gas stations strictly sequentially to force RAM under 1GB...")
+        print(f"Loading {len(stations_config)} gas stations strictly sequentially to force RAM under 1GB...")
         
-        for i, url in enumerate(URLS):
+        for i, config_item in enumerate(stations_config):
+            url = config_item["url"]
+            region = config_item["region"]
             try:
-                print(f"Extracting data from station {i+1}/{len(URLS)} ({url}) ...")
+                print(f"Extracting data from station {i+1}/{len(stations_config)} ({url}) ...")
                 sb.uc_open(url)
                 
                 # Wait for the price element to be visible
@@ -163,19 +289,20 @@ def _run_scraper_logic():
                 print(f"  Raw price text: '{price_text}'")
                 print(f"  Raw age text:   '{age_text}'")
                 print(f"  Name: {name_text}")
+                print(f"  Region: {region}")
                 
                 age_hours = get_age_in_hours(age_text)
+                weight = calculate_weight(age_hours)
                 
                 # Extract float price
                 price = None
                 match = re.search(r'(\d+\.\d+)', price_text)
                 if match:
                     price = float(match.group(1))
-                    if age_hours > 48:
-                        print(f"  [Old] Price >48h (approx. {age_hours}h). Kept in output, ignored for avg.")
+                    if weight <= 0:
+                        print(f"  [Old] Price >30d (approx. {age_hours}h, weight 0). Kept in output, ignored for avg.")
                     else:
-                        prices.append(price)
-                        print(f"  [Added] Extracted price: {price}")
+                        print(f"  [Added] Extracted price: {price} (age ~{age_hours}h, weight {weight:.4f})")
                 else:
                     print("  [Error] Could not parse float price from text.")
                     
@@ -191,10 +318,12 @@ def _run_scraper_logic():
                     "url": url,
                     "name": name_text,
                     "address": address_text,
+                    "region": region,
                     "latitude": lat,
                     "longitude": lng,
                     "price": price,
-                    "age_hours": age_hours
+                    "age_hours": age_hours,
+                    "weight": weight
                 }
                 stations_data.append(station)
                     
@@ -204,40 +333,30 @@ def _run_scraper_logic():
             # Navigate cleanly away to instantly free the page memory
             sb.uc_open("about:blank")
                 
-    if prices:
-        avg_price = sum(prices) / len(prices)
-        valid_count = len(prices)
-    else:
-        # Fallback to the 3 newest stations
-        valid_stations = [s for s in stations_data if s["price"] is not None]
-        valid_stations.sort(key=lambda x: x["age_hours"])
-        newest_3 = valid_stations[:3]
-        if newest_3:
-            avg_price = sum(s["price"] for s in newest_3) / len(newest_3)
-            valid_count = len(newest_3)
-            print("-" * 40)
-            print(f"[Fallback] No stations under 48h found. Averaging the {valid_count} newest stations.")
-        else:
-            avg_price = None
-            valid_count = 0
-            
-    if avg_price is not None:
-        avg_price = round(avg_price, 4)
-            
+    avg_price, valid_count = calculate_weighted_average(stations_data)
+    cheapest_station, most_expensive_station = get_station_extremes(stations_data)
+    regions_stats = calculate_regional_stats(stations_data)
     execution_time = round(time.time() - start_time, 2)
             
     result = {
         "average_price": avg_price,
         "valid_stations_count": valid_count,
+        "cheapest_station": cheapest_station,
+        "most_expensive_station": most_expensive_station,
+        "regions": regions_stats,
         "execution_time_seconds": execution_time,
         "stations": stations_data
     }
     
     if valid_count > 0:
         print("-" * 40)
-        print(f"Successfully calculated average from {valid_count} gas stations.")
+        print(f"Successfully calculated weighted average from {valid_count} gas stations.")
         if avg_price is not None:
-            print(f"Average Diesel price: {avg_price:.4f}")
+            print(f"Weighted Average Diesel price: {avg_price:.4f}")
+        if cheapest_station:
+            print(f"Cheapest station: {cheapest_station.get('name')} ({cheapest_station.get('price')}) in {cheapest_station.get('region')}")
+        if most_expensive_station:
+            print(f"Most expensive station: {most_expensive_station.get('name')} ({most_expensive_station.get('price')}) in {most_expensive_station.get('region')}")
     else:
         print("-" * 40)
         print("No valid prices found.")
@@ -262,7 +381,14 @@ def scrape_gas_prices(retry=True):
             return scrape_gas_prices(retry=False)
         else:
             print(f"  [Fatal] Scraper failed again after retry: {e}")
-            return {"average_price": None, "valid_stations_count": 0, "stations": []}
+            return {
+                "average_price": None,
+                "valid_stations_count": 0,
+                "cheapest_station": None,
+                "most_expensive_station": None,
+                "regions": {},
+                "stations": []
+            }
 
 if __name__ == "__main__":
     import json
