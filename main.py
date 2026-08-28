@@ -8,6 +8,32 @@ import scrape_prices
 scrape_trigger = threading.Event()
 scrape_in_progress = threading.Event()
 
+def get_scrape_interval_seconds():
+    """
+    Returns the interval between background scrapes in seconds.
+    Configurable via environment variables:
+    - SCRAPE_INTERVAL_HOURS (e.g. 4 or 0.5)
+    - SCRAPE_INTERVAL_MINUTES (e.g. 30)
+    - SCRAPE_INTERVAL_SECONDS (e.g. 14400)
+    Defaults to 4 hours (14400s).
+    """
+    if "SCRAPE_INTERVAL_SECONDS" in os.environ:
+        try:
+            return max(60.0, float(os.environ["SCRAPE_INTERVAL_SECONDS"]))
+        except ValueError:
+            pass
+    if "SCRAPE_INTERVAL_MINUTES" in os.environ:
+        try:
+            return max(60.0, float(os.environ["SCRAPE_INTERVAL_MINUTES"]) * 60.0)
+        except ValueError:
+            pass
+    if "SCRAPE_INTERVAL_HOURS" in os.environ:
+        try:
+            return max(60.0, float(os.environ["SCRAPE_INTERVAL_HOURS"]) * 3600.0)
+        except ValueError:
+            pass
+    return 4.0 * 3600.0
+
 def background_scraper_loop():
     while True:
         scrape_in_progress.set()
@@ -52,8 +78,11 @@ def background_scraper_loop():
             
         scrape_in_progress.clear()
         
-        # Sleep for 4 hours, or until triggered manually
-        scrape_trigger.wait(timeout=4 * 3600)
+        # Determine scrape interval (default 4 hours, configurable via env vars)
+        interval_seconds = get_scrape_interval_seconds()
+        print(f"Scrape completed. Next scheduled scrape in {interval_seconds / 3600:.2f} hours ({int(interval_seconds)} seconds) or on manual trigger.")
+        
+        scrape_trigger.wait(timeout=interval_seconds)
         scrape_trigger.clear()
 
 class GasPriceHandler(BaseHTTPRequestHandler):
