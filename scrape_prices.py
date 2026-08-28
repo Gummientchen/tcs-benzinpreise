@@ -59,11 +59,14 @@ def load_urls_from_file(filepath="urls.txt"):
 STATIONS_CONFIG = load_stations_from_file("urls.txt")
 URLS = [s["url"] for s in STATIONS_CONFIG]
 
+# Diesel
 PRICE_XPATH = '//*[@id="bottomDrawer"]/div[2]/ul/li[1]/div[1]/span'
 AGE_XPATH = '//*[@id="bottomDrawer"]/div[2]/ul/li[1]/div[1]/a/div/p'
 NAME_XPATH = '//*[@id="bottomDrawer"]/div[1]/div[1]/div/div/h3'
 ADDRESS_XPATH = '//*[@id="bottomDrawer"]/div[1]/div[1]/div/div/div/p'
 MAP_XPATH = '//*[@id="bottomDrawer"]/div[1]/div[1]/div/div/div/a'
+
+## Need some functionality which can also extract Bleifrei 95 and Bleifrei 98+ (if available). this nees to happen with the same request so we do not increase the number of requests to the server.
 
 def get_age_in_hours(date_text):
     """
