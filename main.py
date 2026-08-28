@@ -20,6 +20,7 @@ def background_scraper_loop():
                     "valid_stations_count": 0,
                     "cheapest_station": None,
                     "most_expensive_station": None,
+                    "fuels": {},
                     "regions": {},
                     "stations": []
                 }

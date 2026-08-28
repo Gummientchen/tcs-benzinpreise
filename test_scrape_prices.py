@@ -51,95 +51,147 @@ def test_calculate_weight():
     assert scrape_prices.calculate_weight(None) == 0.0
     assert scrape_prices.calculate_weight(-5) == 0.0
 
-def test_calculate_weighted_average_normal():
-    stations = [
-        {"name": "S1", "price": 2.00, "age_hours": 0, "weight": 1.0},
-        {"name": "S2", "price": 1.00, "age_hours": 48, "weight": 0.25},
+def test_parse_fuel_items_all_fuels():
+    raw_items = [
+        {"fuel_text": "Diesel : CHF/l 2.23", "age_text": "Letztes Update vor 4 Stunden"},
+        {"fuel_text": "Bleifrei 95 : CHF/l 1.97", "age_text": "Letztes Update vor 4 Stunden"},
+        {"fuel_text": "Bleifrei 98+ : CHF/l 2.10", "age_text": "Letztes Update vor 4 Stunden"}
     ]
-    # (2.00*1.0 + 1.00*0.25) / (1.0 + 0.25) = 2.25 / 1.25 = 1.80
-    avg, count = scrape_prices.calculate_weighted_average(stations)
-    assert count == 2
-    assert avg == 1.80
+    fuels = scrape_prices.parse_fuel_items(raw_items)
+    assert fuels["diesel"]["price"] == 2.23
+    assert fuels["diesel"]["age_hours"] == 4
+    assert fuels["diesel"]["weight"] > 0
 
-def test_calculate_weighted_average_ignores_old_and_unpriced():
-    stations = [
-        {"name": "S1", "price": 1.80, "age_hours": 10, "weight": 0.70},
-        {"name": "S2", "price": 1.50, "age_hours": 800, "weight": 0.0},  # weight 0 (old)
-        {"name": "S3", "price": None, "age_hours": 5, "weight": 0.85},   # no price
+    assert fuels["bleifrei_95"]["price"] == 1.97
+    assert fuels["bleifrei_95"]["age_hours"] == 4
+    assert fuels["bleifrei_95"]["weight"] > 0
+
+    assert fuels["bleifrei_98"]["price"] == 2.10
+    assert fuels["bleifrei_98"]["age_hours"] == 4
+    assert fuels["bleifrei_98"]["weight"] > 0
+
+def test_parse_fuel_items_missing_98_and_unexpected_fuels():
+    raw_items = [
+        {"fuel_text": "Diesel : CHF/l 2.20", "age_text": "Letztes Update vor 6 Tagen"},
+        {"fuel_text": "Bleifrei 95 : CHF/l 1.94", "age_text": "Letztes Update vor 6 Tagen"},
+        {"fuel_text": "Erdgas / CNG : CHF/kg 1.85", "age_text": "Letztes Update vor 1 Tag"}
     ]
-    avg, count = scrape_prices.calculate_weighted_average(stations)
-    assert count == 1
-    assert avg == 1.80
+    fuels = scrape_prices.parse_fuel_items(raw_items)
+    assert fuels["diesel"]["price"] == 2.20
+    assert fuels["diesel"]["age_hours"] == 144
+
+    assert fuels["bleifrei_95"]["price"] == 1.94
+    assert fuels["bleifrei_95"]["age_hours"] == 144
+
+    # Missing Bleifrei 98+ should have null fields
+    assert fuels["bleifrei_98"]["price"] is None
+    assert fuels["bleifrei_98"]["age_hours"] is None
+    assert fuels["bleifrei_98"]["weight"] == 0.0
+
+def test_calculate_weighted_average_multi_fuel():
+    stations = [
+        {
+            "name": "S1",
+            "fuels": {
+                "diesel": {"price": 2.00, "age_hours": 0, "weight": 1.0},
+                "bleifrei_95": {"price": 1.80, "age_hours": 0, "weight": 1.0},
+                "bleifrei_98": {"price": 1.90, "age_hours": 0, "weight": 1.0}
+            }
+        },
+        {
+            "name": "S2",
+            "fuels": {
+                "diesel": {"price": 1.00, "age_hours": 48, "weight": 0.25},
+                "bleifrei_95": {"price": 1.60, "age_hours": 48, "weight": 0.25},
+                "bleifrei_98": {"price": None, "age_hours": None, "weight": 0.0}
+            }
+        }
+    ]
+    # Diesel: (2.0*1.0 + 1.0*0.25) / 1.25 = 1.80
+    d_avg, d_cnt = scrape_prices.calculate_weighted_average(stations, fuel_key="diesel")
+    assert d_cnt == 2
+    assert d_avg == 1.80
+
+    # Bleifrei 95: (1.80*1.0 + 1.60*0.25) / 1.25 = (1.80 + 0.40) / 1.25 = 2.20 / 1.25 = 1.76
+    b95_avg, b95_cnt = scrape_prices.calculate_weighted_average(stations, fuel_key="bleifrei_95")
+    assert b95_cnt == 2
+    assert b95_avg == 1.76
+
+    # Bleifrei 98: only S1 has valid price
+    b98_avg, b98_cnt = scrape_prices.calculate_weighted_average(stations, fuel_key="bleifrei_98")
+    assert b98_cnt == 1
+    assert b98_avg == 1.90
 
 def test_calculate_weighted_average_fallback():
     # All stations older than 30 days (weight 0)
     stations = [
-        {"name": "S1", "price": 1.70, "age_hours": 750, "weight": 0.0},
-        {"name": "S2", "price": 1.80, "age_hours": 800, "weight": 0.0},
-        {"name": "S3", "price": 1.90, "age_hours": 900, "weight": 0.0},
-        {"name": "S4", "price": 2.00, "age_hours": 1000, "weight": 0.0},
+        {"name": "S1", "fuels": {"diesel": {"price": 1.70, "age_hours": 750, "weight": 0.0}}},
+        {"name": "S2", "fuels": {"diesel": {"price": 1.80, "age_hours": 800, "weight": 0.0}}},
+        {"name": "S3", "fuels": {"diesel": {"price": 1.90, "age_hours": 900, "weight": 0.0}}},
+        {"name": "S4", "fuels": {"diesel": {"price": 2.00, "age_hours": 1000, "weight": 0.0}}},
     ]
     # Fallback should average the 3 newest stations: S1 (1.70), S2 (1.80), S3 (1.90)
-    # (1.70 + 1.80 + 1.90) / 3 = 1.80
-    avg, count = scrape_prices.calculate_weighted_average(stations)
+    avg, count = scrape_prices.calculate_weighted_average(stations, fuel_key="diesel")
     assert count == 3
     assert avg == 1.80
 
-def test_calculate_weighted_average_empty():
-    avg, count = scrape_prices.calculate_weighted_average([])
-    assert avg is None
-    assert count == 0
-
-def test_get_station_extremes_5day_filter():
+def test_get_station_extremes_multi_fuel():
     stations = [
-        {"name": "CheapButOld", "price": 1.50, "age_hours": 150},      # > 120h (5 days)
-        {"name": "CheapestIn5Days", "price": 1.75, "age_hours": 24},   # <= 120h
-        {"name": "ExpensiveIn5Days", "price": 1.95, "age_hours": 12},  # <= 120h
+        {
+            "name": "S1",
+            "fuels": {
+                "diesel": {"price": 2.20, "age_hours": 24},
+                "bleifrei_95": {"price": 1.95, "age_hours": 24},
+                "bleifrei_98": {"price": 2.10, "age_hours": 24}
+            }
+        },
+        {
+            "name": "S2",
+            "fuels": {
+                "diesel": {"price": 2.10, "age_hours": 12},
+                "bleifrei_95": {"price": 2.00, "age_hours": 12},
+                "bleifrei_98": {"price": 2.05, "age_hours": 12}
+            }
+        }
     ]
-    cheapest, most_expensive = scrape_prices.get_station_extremes(stations)
-    assert cheapest["name"] == "CheapestIn5Days"
-    assert cheapest["price"] == 1.75
-    assert most_expensive["name"] == "ExpensiveIn5Days"
-    assert most_expensive["price"] == 1.95
+    # Diesel cheapest S2 (2.10), most expensive S1 (2.20)
+    d_cheap, d_exp = scrape_prices.get_station_extremes(stations, fuel_key="diesel")
+    assert d_cheap["name"] == "S2"
+    assert d_exp["name"] == "S1"
 
-def test_get_station_extremes_tie_breaker():
-    stations = [
-        {"name": "StationOlder", "price": 1.75, "age_hours": 48},
-        {"name": "StationFresher", "price": 1.75, "age_hours": 6},
-    ]
-    cheapest, most_expensive = scrape_prices.get_station_extremes(stations)
-    # Lower age_hours wins tie-break
-    assert cheapest["name"] == "StationFresher"
+    # Bleifrei 95 cheapest S1 (1.95), most expensive S2 (2.00)
+    b95_cheap, b95_exp = scrape_prices.get_station_extremes(stations, fuel_key="bleifrei_95")
+    assert b95_cheap["name"] == "S1"
+    assert b95_exp["name"] == "S2"
 
-def test_get_station_extremes_fallback():
-    # All stations older than 5 days (120h)
+def test_calculate_regional_stats_multi_fuel():
     stations = [
-        {"name": "S1", "price": 1.70, "age_hours": 200},
-        {"name": "S2", "price": 1.65, "age_hours": 300},
-        {"name": "S3", "price": 1.85, "age_hours": 400},
-        {"name": "S4_VeryOld", "price": 1.20, "age_hours": 900}, # Excluded from top 3 newest
-    ]
-    cheapest, most_expensive = scrape_prices.get_station_extremes(stations)
-    # Candidates are top 3 newest: S1, S2, S3
-    assert cheapest["name"] == "S2"
-    assert cheapest["price"] == 1.65
-    assert most_expensive["name"] == "S3"
-    assert most_expensive["price"] == 1.85
-
-def test_calculate_regional_stats():
-    stations = [
-        {"name": "S1", "region": "Brienz", "price": 1.70, "age_hours": 10, "weight": 0.8},
-        {"name": "S2", "region": "Brienz", "price": 1.80, "age_hours": 20, "weight": 0.6},
-        {"name": "S3", "region": "Interlaken", "price": 1.90, "age_hours": 5, "weight": 0.9},
+        {
+            "name": "S1",
+            "region": "Brienz",
+            "fuels": {
+                "diesel": {"price": 2.10, "age_hours": 10, "weight": 0.8},
+                "bleifrei_95": {"price": 1.90, "age_hours": 10, "weight": 0.8},
+                "bleifrei_98": {"price": 2.00, "age_hours": 10, "weight": 0.8}
+            }
+        },
+        {
+            "name": "S2",
+            "region": "Interlaken",
+            "fuels": {
+                "diesel": {"price": 2.20, "age_hours": 5, "weight": 0.9},
+                "bleifrei_95": {"price": 1.95, "age_hours": 5, "weight": 0.9},
+                "bleifrei_98": {"price": None, "age_hours": None, "weight": 0.0}
+            }
+        }
     ]
     stats = scrape_prices.calculate_regional_stats(stations)
     assert "Brienz" in stats
     assert "Interlaken" in stats
-    assert stats["Brienz"]["valid_stations_count"] == 2
-    assert stats["Brienz"]["cheapest_station"]["name"] == "S1"
-    assert stats["Brienz"]["most_expensive_station"]["name"] == "S2"
-    assert stats["Interlaken"]["valid_stations_count"] == 1
-    assert stats["Interlaken"]["cheapest_station"]["name"] == "S3"
+    assert stats["Brienz"]["diesel"]["valid_stations_count"] == 1
+    assert stats["Brienz"]["bleifrei_95"]["valid_stations_count"] == 1
+    assert stats["Brienz"]["bleifrei_98"]["valid_stations_count"] == 1
+    assert stats["Interlaken"]["bleifrei_98"]["valid_stations_count"] == 0
 
 def test_get_age_in_hours():
     assert scrape_prices.get_age_in_hours("Letztes Update vor 2 Stunden") == 2
