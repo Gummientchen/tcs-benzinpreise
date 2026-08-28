@@ -27,8 +27,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # Copy all the scripts and app files
 COPY . .
 
-# Ensure run.sh is executable
-RUN chmod +x run.sh
+# Ensure run.sh has Unix line endings and is executable
+RUN sed -i 's/\r$//' run.sh && chmod +x run.sh
 
 # Expose port 8080 for the web server
 EXPOSE 8080
